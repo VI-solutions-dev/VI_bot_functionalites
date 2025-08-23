@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="database_path"         default="rtabmap.db"/>
+  <arg name="rgb_topic"             default="/camera/rgb/image_color"/>
+  <arg name="depth_topic"           default="/camera/depth/image"/>
+  <arg name="camera_info_topic"     default="/camera/rgb/camera_info"/>
+  <arg name="frame_id"              default="camera_link"/>
+  <arg name="wait_for_transform"    default="0.2"/>
+
+  <arg name="rviz"          default="true"/>
+  <arg name="rtabmapviz"    default="true"/>
+  <arg name="localization"  default="false"/>  <!-- set true for pure-loc -->
+
+  <group ns="rtabmap">
+    <node pkg="rtabmap_slam" type="rtabmap" name="rtabmap" output="screen"
+          args="$(eval '--delete_db_on_start' if arg('localization')=='true' else '')">
+
+      <param name="database_path"                value="$(arg database_path)"/>
+      <param name="frame_id"                     value="$(arg frame_id)"/>
+      <param name="subscribe_depth"              value="true"  type="bool"/>
+      <param name="subscribe_scan"               value="true"  type="bool"/>
+      <param name="wait_for_transform_duration"  value="$(arg wait_for_transform)"/>
+      <param name="map_negative_poses_ignored"   value="true"  type="bool"/>
+
+      <!-- grid from depth for Kinect v1 -->
+      <param name="Grid/FromDepth"               value="true"/>
+
+      <!-- tuning -->
+      <param name="Reg/Force3DoF"                value="true"/>
+      <param name="Kp/DetectorStrategy"          value="0"/>
+      <param name="Kp/MaxFeatures"               value="400"/>
+      <param name="SURF/HessianThreshold"        value="100"/>
+      <param name="Reg/Strategy"                 value="0"/>
+      <param name="Vis/MinInliers"               value="15"/>
+      <param name="Mem/NotLinkedNodesKept"       value="false"/>
+
+      <!-- mapping vs localisation -->
+      <param if="$(arg localization)" name="Mem/IncrementalMemory" value="false"/>
+      <param unless="$(arg localization)" name="Mem/IncrementalMemory" value="true"/>
+
+      <!-- topic remaps -->
+      <remap from="rgb/image"        to="$(arg rgb_topic)"/>
+      <remap from="depth/image"      to="$(arg depth_topic)"/>
+      <remap from="rgb/camera_info"  to="$(arg camera_info_topic)"/>
+      <remap from="scan"             to="/scan"/>
+      <remap from="odom"             to="/odom"/>
+      <remap from="grid_map"         to="/map"/>
+    </node>
+
+    <node if="$(arg rtabmapviz)" pkg="rtabmap_viz" type="rtabmap_viz"
+          name="rtabmap_viz"
+          args="-d $(find rtabmap_viz)/launch/config/rgbd_gui.ini"
+          output="screen">
+      <param name="subscribe_depth"  value="true"  type="bool"/>
+      <param name="subscribe_scan"   value="true"  type="bool"/>
+      <param name="frame_id"         value="$(arg frame_id)"/>
+      <param name="queue_size"       value="10"/>
+      <remap from="rgb/image"        to="$(arg rgb_topic)"/>
+      <remap from="depth/image"      to="$(arg depth_topic)"/>
+      <remap from="rgb/camera_info"  to="$(arg camera_info_topic)"/>
+      <remap from="scan"             to="/scan"/>
+      <remap from="odom"             to="/odom"/>
+      <param name="rgb/image_transport"   value="compressed"/>
+      <param name="depth/image_transport" value="compressedDepth"/>
+    </node>
+  </group>
+
+  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find rtabmap_ros)/launch/config/rgbd_gui.ini"
+        output="screen"/>
+</launch>

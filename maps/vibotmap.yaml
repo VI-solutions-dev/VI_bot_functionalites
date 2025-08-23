@@ -1,0 +1,7 @@
+image: /home/boucherikator/ard_ws/src/robot_diff/maps/vibotmap.pgm
+resolution: 0.050000
+origin: [-2.076274, -2.691662, 0.000000]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
+

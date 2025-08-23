@@ -1,0 +1,6 @@
+<launch>
+  <!-- freenect.launch lives in the freenect_launch package -->
+  <include file="$(find freenect_launch)/launch/freenect.launch">
+    <arg name="depth_registration" value="true"/>
+  </include>
+</launch>
