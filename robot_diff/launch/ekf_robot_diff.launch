@@ -1,0 +1,165 @@
+<launch>
+  <!-- ================== ARGS ================== -->
+  <arg name="model"                default="dd_robot6.urdf"/>
+  <arg name="use_rtabmapviz"       default="true"/>
+  <arg name="use_vo"               default="true"/>   <!-- visual odom node -->
+  <arg name="use_ekf"              default="true"/>
+  <arg name="virtual_scan"         default="true"/>
+  <arg name="rviz_config"          default="$(find robot_diff)/urdf.rviz"/>
+  <arg name="db_path"              default="$(env HOME)/.ros/rtabmap.db"/>
+
+  <!-- ================== ROBOT DESCRIPTION ================== -->
+  <param name="robot_description" textfile="$(find robot_diff)/urdf/$(arg model)"/>
+
+  <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher"/>
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+
+  <!-- ===== STATIC TF: base_link -> camera_link (EDIT the 6 numbers!) ===== -->
+  <!--            x    y    z   R   P   Y  parent    child                    -->
+  <node pkg="tf2_ros" type="static_transform_publisher" name="cam_tf"
+        args="0 0 0 0 0 0 base_link camera_link"/> <!-- TODO: put real values -->
+
+  <!-- ===== diff_tf disabled (make sure it doesn't publish odom->base_link) -->
+  <node pkg="robot_diff" type="diff_tf.py" name="diff_tf" output="screen">
+    <param name="publish_tf" value="false"/>
+  </node>
+
+  <!-- ===== Trajectory viz (ok) -->
+  <node name="robot_trajectory_visualization"
+        pkg="robot_diff"
+        type="trajectory_visualization.py"
+        output="screen"/>
+
+  <!-- ===== Rosbridge ===== -->
+  <include file="$(find rosbridge_server)/launch/rosbridge_websocket.launch">
+    <arg name="port" value="9090"/>
+  </include>
+
+  <!-- ===== RViz ===== -->
+  <node name="rviz" pkg="rviz" type="rviz"
+        args="-d $(arg rviz_config)"
+        required="true" />
+
+  <param name="use_sim_time" value="false"/>
+
+  <!-- ================== VISUAL ODOMETRY (rgbd_odometry) ================== -->
+  <group if="$(arg use_vo)">
+    <node pkg="rtabmap_odom" type="rgbd_odometry" name="rgbd_odometry" output="screen">
+      <!-- Child frame (robot body) and parent (vo/world). We don't publish TF -->
+      <param name="frame_id" value="base_link"/>
+      <param name="odom_frame_id" value="odom_vo"/>
+      <param name="publish_tf" value="false"/>
+
+      <!-- Help VO stick using motion guess -->
+      <param name="Odom/GuessMotion" value="true"/>
+
+      <!-- Relax thresholds / increase features -->
+      <param name="Odom/MinInliers"  value="12"/>
+      <param name="Vis/MinInliers"   value="12"/>
+      <param name="Kp/MaxFeatures"   value="1500"/>
+
+      <!-- Sync tuning -->
+      <param name="approx_sync" value="true"/>
+      <param name="approx_sync_max_interval" value="0.05"/>
+
+      <!-- ==== Advanced parameter tuning for Visual Odometry === -->
+      <!-- Switch to frame-to-frame odometry instead of frame-to-map (default) for higher frequency
+           This corresponds to the tutorial recommendation: 0=F2M, 1=F2F【7692061021451†L170-L174】 -->
+      <param name="Odom/Strategy" value="1"/>
+      <!-- Use optical flow correspondences (0=features matching, 1=optical flow)【7692061021451†L175-L181】 -->
+      <param name="Vis/CorType" value="1"/>
+      <!-- Limit the size of the frame-to-map features buffer (default 2000)【7692061021451†L183-L186】 -->
+      <param name="OdomF2M/MaxSize" value="1000"/>
+      <!-- Reduce the maximum number of visual features extracted per image【7692061021451†L183-L187】 -->
+      <param name="Vis/MaxFeatures" value="600"/>
+      <!-- Increase minimum distance between extracted GFTT features for high‑resolution images【7692061021451†L196-L205】 -->
+      <param name="GFTT/MinDistance" value="10"/>
+      <!-- Constrain odometry to 3 DoF on flat ground (x, y, yaw)【7692061021451†L228-L236】 -->
+      <param name="Reg/Force3DoF" value="true"/>
+
+      <!-- Optional: auto reset after 1 bad frame -->
+      <param name="Odom/ResetCountdown" value="1"/>
+
+      <!-- Feed EKF odom as guess (topic must exist) -->
+      <remap from="odom" to="/odom"/>
+
+      <!-- Camera topics -->
+      <remap from="rgb/image"       to="/camera/rgb/image_color"/>
+      <remap from="depth/image"     to="/camera/depth/image"/>
+      <remap from="rgb/camera_info" to="/camera/rgb/camera_info"/>
+    </node>
+  </group>
+
+  <!-- ================== EKF (robot_localization) ================== -->
+  <group if="$(arg use_ekf)">
+    <node pkg="robot_localization"
+          type="ekf_localization_node"
+          name="ekf_odom"
+          output="screen">
+      <!-- Publish /odometry/filtered but remap it to /odom for everyone -->
+      <remap from="odometry/filtered" to="/odom"/>
+      <rosparam file="$(find robot_diff)/params/ekf.yaml" command="load"/>
+    </node>
+  </group>
+
+  <!-- ================== RTAB-Map SLAM ================== -->
+  <include file="$(find rtabmap_ros)/launch/rtabmap.launch">
+    <!-- Camera topics -->
+    <arg name="rgb_topic"         value="/camera/rgb/image_rect_color"/>
+    <arg name="depth_topic"       value="/camera/depth_registered/image_raw"/>
+    <arg name="camera_info_topic" value="/camera/rgb/camera_info"/>
+
+    <!-- Use external odom (EKF) -->
+    <arg name="icp_odometry" value="false"/>
+    <arg name="odom_topic"   value="/odom"/>
+
+    <!-- Frames (these args exist in stock rtabmap.launch) -->
+    <arg name="frame_id"      value="base_link"/>
+    <arg name="odom_frame_id" value="odom"/>
+
+    <!-- Sync -->
+    <arg name="approx_sync" value="true"/>
+    <arg name="queue_size"  value="20"/>
+    <param name="approx_sync_max_interval" value="0.05"/>
+
+    <!-- DB + params -->
+    <arg name="database_path" value="$(arg db_path)"/>
+    <arg name="rtabmapviz"    value="$(arg use_rtabmapviz)"/>
+    <!-- Advanced parameter tuning for RTAB‑Map SLAM.  The parameters below correspond
+         to the ROS wiki advanced tuning tutorial:
+         - Force the same 3 DoF constraint used for odometry and enable 2D graph optimisation【7692061021451†L228-L240】.
+         - Initialise the projected occupancy grid to a reasonable size (50 m)【7692061021451†L244-L247】.
+         - Filter noisy points from the 3D map using radius outlier removal【7692061021451†L251-L255】.
+         - Configure the projected occupancy grid characteristics to improve obstacle detection【7692061021451†L260-L285】.
+         - Restart mapping on loop closure if odometry is reset【7692061021451†L212-L222】.
+    -->
+    <arg name="rtabmap_args"  value="--delete_db_on_start \
+                                     --Reg/Strategy 0 \
+                                     --Vis/FeatureType 1 \
+                                     --Kp/DetectorStrategy 4 \
+                                     --Kp/MaxFeatures 1000 \
+                                     --Reg/Force3DoF true \
+                                     --Optimizer/Slam2D true \
+                                     --grid_size 50 \
+                                     --cloud_noise_filtering_radius 0.05 \
+                                     --cloud_noise_filtering_min_neighbors 2 \
+                                     --proj_max_ground_angle 45 \
+                                     --proj_max_ground_height 0.1 \
+                                     --proj_max_height 2.0 \
+                                     --proj_min_cluster_size 20 \
+                                     --Rtabmap/StartNewMapOnLoopClosure true"/>
+  </include>
+
+  <!-- ================== Virtual Laser (PointCloud2 -> LaserScan) ================== -->
+  <group if="$(arg virtual_scan)">
+    <node pkg="pointcloud_to_laserscan" type="pointcloud_to_laserscan_node" name="pc2scan" output="screen">
+      <param name="target_frame" value="base_link"/>
+      <param name="min_height" value="0.05"/>
+      <param name="max_height" value="1.2"/>
+      <param name="range_min" value="0.3"/>
+      <param name="range_max" value="8.0"/>
+      <remap from="cloud_in" to="/camera/depth/points"/>
+      <remap from="scan"     to="/scan"/>
+    </node>
+  </group>
+</launch>
